@@ -53,3 +53,34 @@
 ### Open Questions / Hard Rule 5 Items
 - **Databento `side` semantics & dtypes**: Awaiting user's manual pull and pasted dtypes to confirm exact column names, encodings, and `side` semantics ('A' vs 'B') before implementing cleaning.
 
+## Phase 3: MetaTrader 5 Tick Logger & Gap Monitor (2026-10-19)
+
+### What was built
+- **MT5 Logger Tool (`tools/mt5_logger.py`)**:
+  - `MT5FeedProtocol`: Abstract interface isolating MetaTrader5 Python client behind a testable protocol.
+  - `MetaTrader5Client`: Windows-specific client wrapping official `MetaTrader5` package.
+  - `FakeMT5Feed`: In-memory test feed for cross-platform execution and simulated playback.
+  - **Deduplication**: Filters out duplicate ticks using `time_msc` across overlapping 250ms polls.
+  - **Server Offset Measurement (Hard Rule 5)**: Dynamically calculates `tick.time - time.time()` per tick batch and records it in the Parquet dataset and metadata (`server_offset_seconds`).
+  - **Flush Schedule**: Flushes buffered ticks every 10 minutes (`FLUSH_INTERVAL_SEC = 600.0`) and on `SIGINT`/`SIGTERM` to `data/raw_mt5/xauusd/date=YYYY-MM-DD/HHMMSS.parquet` (zstd).
+  - **Market Open Filter (`is_market_open`)**: Accurately tracks Sunday 18:00 ET to Friday 17:00 ET (excluding daily 17:00-18:00 ET maintenance).
+  - **Telegram Alerting (`TelegramAlerter`)**:
+    - Triggers alert if no ticks arrive for $\ge 5$ minutes during open market hours.
+    - Suppresses gap warnings during weekend / closed hours.
+    - Sends critical notification with full traceback on unhandled process crash.
+- **Unit Tests (`tests/test_mt5_logger.py`)**:
+  - `test_deduplication_on_time_msc`: Confirms duplicate tick timestamps are discarded.
+  - `test_flush_output_format_and_server_offset`: Verifies zstd parquet emission, column schema, and embedded server offset metadata.
+  - `test_gap_alert_during_open_hours`: Confirms alert triggers after 300s tick absence during open market hours.
+  - `test_gap_alert_suppressed_during_closed_hours`: Confirms alert is suppressed during market closures.
+  - `test_market_hours_checker`: Validates session boundaries across all days of the week.
+
+### Assumptions Made
+1. **Deduplication Granularity**: MT5 ticks with identical `time_msc` are treated as duplicate broadcast events from the terminal and deduplicated.
+2. **Server Offset**: Defined as `tick.time - time.time()` in seconds. Because MetaTrader broker clocks typically run on Eastern European Time (UTC+2 / UTC+3 DST), this offset measures broker-to-local clock difference without hardcoding server timezone.
+3. **Emergency Flush on Crash/SIGINT**: Any buffered ticks are written immediately to Parquet before process exit.
+
+### Open Questions / Hard Rule 5 Items
+- **MT5 Broker Server Offset Alignment**: With measured server offsets now logged in each flush partition, empirical validation will confirm consistency with CME GC UTC timestamps in Phase 4.
+
+
