@@ -21,6 +21,7 @@ dependencies = [
     "statsmodels>=0.14.0",
     "scikit-learn>=1.4.0",
     "arch>=7.0.0",
+    "databento>=0.87.0",
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 

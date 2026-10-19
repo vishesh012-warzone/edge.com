@@ -24,3 +24,32 @@
 - **Databento `side` semantics**: Whether `A` and `B` denote the maker side or taker (aggressive) side. Implementation intentionally deferred to Phase 2 with STOP for verification before ingestion.
 - **Contract-roll handling**: Whether to roll on volume transition, open interest, or standard CME calendar schedule (8 business days prior to delivery). Will stop and verify with data in Phase 2.
 - **MT5 server-time offset**: Broker server timezone offset (e.g., UTC+2/UTC+3 with Eastern European DST vs fixed UTC offset) must be calibrated before ingesting live broker ticks.
+
+## Phase 2: Databento GC Ingestion & Cost Guard (2026-10-19)
+
+### What was built
+- **Ingestion Module (`src/ingest.py`)**:
+  - `pull_day(target_date)`: Ingests one day of CME GC trades (`GLBX.MDP3`, `trades`, `GC.v.0`, `continuous`), writing zstd-compressed Parquet to `data/raw/gc_trades/date=YYYY-MM-DD/part.parquet`.
+  - **Idempotency**: Skips execution if `part.parquet` or `_empty` already exists for that date partition.
+  - **Empty-Day Handling**: If a date has 0 trades (weekends/holidays), generates an empty file marker `date=YYYY-MM-DD/_empty`.
+  - **Retry with Exponential Backoff**: Retries on transient API/network errors up to `max_retries=4` with exponential backoff before raising `IngestionError`.
+  - **Filtered Columns Kept**: `ts_event`, `ts_recv`, `instrument_id`, `symbol`, `side`, `price`, `size`, `flags`, `sequence`, `action`.
+  - **Cost Guard & CLI**:
+    - `python -m src.ingest --start YYYY-MM-DD --end YYYY-MM-DD --dry-run` prints `metadata.get_cost()` for the range and exits with 0 without pulling data.
+    - Live runs require `--approve-usd N` and abort with exit code 2 if estimated cost exceeds `N` or if approval is absent.
+- **Test Suite (`tests/test_ingest.py`)**:
+  - Comprehensive unit tests mocking all Databento API interactions (zero live network calls).
+  - Validates `pull_day` parquet emission and column filtering.
+  - Validates idempotency for existing parquet and empty marker files.
+  - Validates retry recovery on transient errors and error propagation on exhaustion.
+  - Validates dry-run cost checks, cost guard abort without approval, cost guard abort when cost exceeds threshold, and successful execution within budget.
+  - Validates CLI invocations and exit codes.
+
+### Assumptions Made
+1. **UTC Day Bounds**: `pull_day` defines the API query interval from `YYYY-MM-DDT00:00:00` to `(YYYY-MM-DD + 1d)T00:00:00` UTC.
+2. **Column Preservation**: Raw fields are written with original values without pre-transforming `side` or prices, preserving raw data immutability.
+3. **Empty Day Marker**: An empty day creates a 0-byte file `_empty` in the date partition directory.
+
+### Open Questions / Hard Rule 5 Items
+- **Databento `side` semantics & dtypes**: Awaiting user's manual pull and pasted dtypes to confirm exact column names, encodings, and `side` semantics ('A' vs 'B') before implementing cleaning.
+
