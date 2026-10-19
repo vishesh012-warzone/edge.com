@@ -131,6 +131,35 @@
 ### Open Questions / Hard Rule 5 Items
 - None for this phase. All bar calculations use completed clean trades (zero look-ahead, immutable raw data preserved).
 
+## Phase 6: Volume Profile, Sessions Table & Pipeline QA (2026-10-19)
+
+### What was built
+- **Volume Profile & Sessions Module (`src/profile.py`)**:
+  - `volume_profile(price, size, tick=0.10, va=0.70)`: Computes POC, VAL, VAH, and 1D profile array using vectorized `np.bincount`. Expands Value Area from POC two bins at a time toward the heavier side until $\ge 70\%$ of session volume is included.
+  - `compute_volume_profile(prices, volumes, tick_size=0.10, value_area_pct=0.70)`: Dict-returning wrapper for profile levels and array.
+  - `build_sessions_table(clean_trades_input, output_path, tick_size=0.10, value_area_pct=0.70)`: Constructs the `sessions` Parquet table (`trade_date, sub, instrument_id, o, h, l, c, vol, buy_v, sell_v, n_trades, poc, val, vah, t_start, t_end`), partitioned by `trade_date=YYYY-MM-DD` with zstd compression. Filters out maintenance break trades.
+- **Data Quality Assurance & Reporting (`src/qa.py`)**:
+  - `run_qa(sessions_input, clean_trades_input, output_json, output_md, raise_on_failure)`: Comprehensive integrity report generation in JSON and Markdown covering:
+    1. Session counts per calendar year vs the ~250/yr norm.
+    2. Per-day volume distribution and extreme volume outliers ($> 4 \times \text{IQR}$).
+    3. Zero-volume days and empty active sessions.
+    4. Profile invariants: `VAL <= POC <= VAH`, `POC in [l, h]`, `VAL in [l, h]`, `VAH in [l, h]`, `t_start <= t_end`, `vol >= buy_v + sell_v`, and Value Area volume $\ge 70\%$ of total.
+    5. Contract roll isolation: verifies `instrument_id` integrity and guarantees levels never cross contract roll transitions.
+  - CLI: `python -m src.qa --sessions ... --trades ... --output-json ... --output-md ... --strict`. Exits non-zero on failure without fixing data silently.
+- **Testing Suite (`tests/test_profile.py`, `tests/test_qa.py`)**:
+  - Property tests validating `VAL <= POC <= VAH`, `POC inside [low, high]`, `VA volume >= 70%`, and strict permutation/row-order invariance across synthetic profiles.
+  - End-to-end sessions table construction and schema validation.
+  - QA verification tests for all 5 check categories, failure detection, and CLI exit codes.
+
+### Assumptions Made
+1. **Value Area Two-Bin Expansion**: Starting from the POC bin, the algorithm compares the 2 bins immediately above versus 2 bins immediately below, advancing into the heavier side. If a side reaches the price boundary, remaining expansion proceeds along the other side.
+2. **Break Trade Exclusion**: Trades occurring during the 17:00–18:00 ET maintenance break (`sub is None`) are excluded from session profiles since sessions are defined strictly for `asia`, `london`, and `ny`.
+3. **Contract Roll Isolation**: Sessions are grouped by `(trade_date, sub, instrument_id)`. Levels are never aggregated across different contract identifiers.
+
+### Open Questions / Hard Rule 5 Items
+- None for this phase. Contract roll handling explicitly isolated via `instrument_id`.
+
+
 
 
 
