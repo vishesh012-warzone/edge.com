@@ -1,0 +1,50 @@
+version: "1.0"
+project: "GC/XAU Order-Flow Research Pipeline"
+last_updated: "2026-10-19"
+governance: "docs/prereg.md, docs/SPEC.md, AGENTS.md"
+
+# Statistical Event Study Thresholds
+statistical_testing:
+  significance_level_alpha: 0.01
+  max_fdr_q_value: 0.05
+  min_event_sample_size: 100
+  min_t_statistic: 2.80
+  min_win_rate_h1: 0.65
+  bootstrap_iterations: 10000
+  multiple_testing_correction: "holm_bonferroni"
+
+# Strategy & Backtest Performance Gates (In-Sample / Out-of-Sample)
+backtest_metrics:
+  in_sample:
+    min_annualized_sharpe: 1.25
+    min_profit_factor: 1.35
+    max_drawdown_pct: 15.0
+    min_trades_per_year: 80
+    min_win_rate: 0.52
+    min_calmar_ratio: 1.00
+  out_of_sample:
+    min_annualized_sharpe: 0.85
+    min_deflated_sharpe_ratio: 0.95
+    max_drawdown_pct: 20.0
+    min_profit_factor: 1.20
+    min_trades_per_year: 60
+
+# Transaction Costs & Execution Assumptions
+execution_parameters:
+  cme_gc:
+    tick_size: 0.10
+    point_value_usd: 100.0
+    commission_per_contract_roundturn_usd: 1.50
+    slippage_ticks: 1.0
+  broker_xauusd:
+    spread_pips: 2.0
+    slippage_pips: 1.0
+    commission_per_lot_usd: 6.00
+
+# Data Pipeline & Quality Validation Gates
+data_quality_gates:
+  max_missing_timestamp_pct: 0.01
+  strictly_increasing_timestamps: true
+  zero_lookahead_tolerance: 0
+  enforce_utc_storage: true
+  session_wallclock: "America/New_York"
