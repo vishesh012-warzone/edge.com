@@ -107,5 +107,30 @@
 ### Open Questions / Hard Rule 5 Items
 - **Databento `side` semantics**: Confirmed standard mapping `A` (+1), `B` (-1), `N` (0). Any broker or venue discrepancies will be verified on live samples.
 
+## Phase 5: 1s Bars & Auto-Calibrated Volume Bars Derivation (2026-10-19)
+
+### What was built
+- **Derivation Module (`src/derive.py`)**:
+  - `derive_bars_1s_from_df(trades_df)`: 1-second OHLCV bar aggregation via DuckDB SQL over trade events. Computes `ts` (interval start in ns), `instrument_id`, `o` (first price), `h` (max price), `l` (min price), `c` (last price), `v` (total volume), `buy_v` (buyer aggressor volume), `sell_v` (seller aggressor volume), `unsided_v` (neutral volume), and `n` (tick count).
+  - `calibrate_volume_bar_size(trades_df, target_bars_per_day=150)`: Auto-calibrates volume bar size per month/dataset based on average daily volume (ADV) to target 100–200 bars/day.
+  - `derive_volume_bars_from_df(trades_df, bar_size=None)`: Derives volume bars using cumulative size window arithmetic partitioned strictly by `trade_date` via DuckDB SQL: `(SUM(size) OVER (PARTITION BY trade_date ORDER BY ts_event, sequence) - 1) // bar_size`. Computes `trade_date`, `bar` index, `o, h, l, c`, `v`, `delta` (`buy_v - sell_v`), `t0` (first tick ts), `t1` (last tick ts).
+  - `build_bars_1s(input_clean_path, output_dir)` & `build_volume_bars(...)`: DuckDB pipeline reading cleaned Parquet files and emitting Hive-partitioned zstd Parquet datasets (`trade_date=YYYY-MM-DD/part.parquet`).
+- **Unit Test Suite (`tests/test_derive.py`)**:
+  - `test_volume_conserved_and_delta_balance_bars_1s`: Verifies raw cleaned trade volume equals total 1s bar volume, and `buy_v + sell_v + unsided_v == v`.
+  - `test_volume_conserved_in_volume_bars`: Verifies raw cleaned trade volume equals total volume across all volume bars without loss or duplication.
+  - `test_no_volume_bar_spans_two_trade_dates`: Validates that volume bar sequences strictly reset per `trade_date`, and no bar's interval (`[t0, t1]`) spans across different trade dates.
+  - `test_volume_bar_calibration`: Verifies monthly/dataset ADV calibration targets the 100–200 bars/day band.
+  - `test_duckdb_partitioned_parquet_output`: Tests end-to-end pipeline execution from Parquet input to partitioned Parquet output.
+
+### Assumptions Made
+1. **1-Second Bar Timestamp Alignment**: `ts` is floored to integer seconds in UTC nanoseconds (`(ts_event // 1_000_000_000) * 1_000_000_000`). Only intervals with trades produce bars (sparse / trade-driven aggregation, per spec).
+2. **Cumulative Volume Bar Indexing**: Computed as `(SUM(size) OVER (PARTITION BY trade_date ORDER BY ts_event, sequence) - 1) // bar_size`. Partitioning strictly by `trade_date` prevents any bar from spanning across trade dates and guarantees zero trade leakage or boundary mixing.
+3. **Volume and Delta Conservation**: All buyer, seller, and neutral trades are accounted for: `buy_v + sell_v + unsided_v == v`, and `delta = buy_v - sell_v`.
+4. **Auto-Calibration Target**: Default target is 150 bars/day (midpoint of [100, 200]), calculated from `round(ADV / 150)` and clamped within bounds.
+
+### Open Questions / Hard Rule 5 Items
+- None for this phase. All bar calculations use completed clean trades (zero look-ahead, immutable raw data preserved).
+
+
 
 
