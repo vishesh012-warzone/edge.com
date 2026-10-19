@@ -83,4 +83,29 @@
 ### Open Questions / Hard Rule 5 Items
 - **MT5 Broker Server Offset Alignment**: With measured server offsets now logged in each flush partition, empirical validation will confirm consistency with CME GC UTC timestamps in Phase 4.
 
+## Phase 4: Trade Cleaning, Session Mapping & Outlier Flagging (2026-10-19)
+
+### What was built
+- **Cleaning Module (`src/clean.py`)**:
+  - `clean_trades_dataframe(df)`: Filters `action == 'T'` and `size > 0`, sorts ascending by `(ts_event, sequence)`, assigns `trade_date = date of (ET + 6h)`, maps `sub` session window, computes aggressor sign `sgn` (+1 for 'A', -1 for 'B', 0 for 'N'), signed volume `sv = sgn * size`, and flags price jumps $> 10 \times \text{ATR}$ (`is_jump`) without dropping rows. Aggregates neutral volume (`side == 'N'`).
+  - `load_and_clean_trades(raw_input_path, output_path)`: Uses DuckDB SQL over Parquet to query, sort, and clean raw trade files, writing zstd-compressed Parquet.
+- **Unit Tests Written FIRST (`tests/test_clean.py`)**:
+  - `test_dst_spring_forward_weekend`: Validates session boundaries and Monday trade_date mapping across the March 10, 2024 DST transition.
+  - `test_dst_fall_back_weekend`: Validates session boundaries and Monday trade_date mapping across the November 3, 2024 DST transition.
+  - `test_sunday_1800_et_open_mapping`: Confirms Sunday 18:00:00 ET open maps to Monday's trade_date and Asia session (`sub='asia'`).
+  - `test_1700_to_1800_et_break_produces_no_rows`: Verifies that maintenance break ticks are unassigned (`sub=None`) and excluded from session output.
+  - `test_boundary_ticks_at_0200_and_0820_et`: Validates exact half-open boundaries: 02:00:00.000 ET is London; 08:20:00.000 ET is NY; 17:00:00.000 ET is Break.
+  - `test_clean_trades_filtering_sorting_and_signs`: Confirms filtering of non-trade actions (`action != 'T'`), zero size, sort order `(ts_event, sequence)`, `sgn`, `sv`, and neutral volume counting.
+  - `test_jump_flagging_over_10_atr`: Validates flagging of price jumps $> 10 \text{ ATR}$ (`is_jump=True`) while preserving all rows in dataset.
+  - `test_load_and_clean_trades_duckdb`: End-to-end test reading and writing Parquet via DuckDB.
+
+### Assumptions Made
+1. **Half-Open Session Boundaries**: Intervals are defined as `[start, end)`: `asia: [18:00, 02:00)`, `london: [02:00, 08:20)`, `ny: [08:20, 17:00)`. Ticks exactly at 02:00 belong to London; ticks exactly at 08:20 belong to NY.
+2. **Aggressor Side Mapping**: `side == 'A'` maps to buyer aggressor (`+1`), `side == 'B'` maps to seller aggressor (`-1`), and `side == 'N'` maps to neutral (`0`).
+3. **10 ATR Jump Definition**: Computed as tick-to-tick absolute price difference exceeding 10 times the rolling mean true range (floored at `TICK_SIZE_GC = 0.10`). Flagged rows are retained.
+
+### Open Questions / Hard Rule 5 Items
+- **Databento `side` semantics**: Confirmed standard mapping `A` (+1), `B` (-1), `N` (0). Any broker or venue discrepancies will be verified on live samples.
+
+
 
